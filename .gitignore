@@ -1,0 +1,7 @@
+*~
+/.ghc.environment.*
+/dist-newstyle/
+/dist/
+/cabal.sandbox.config
+/.cabal-sandbox/
+/cabal.project.local
