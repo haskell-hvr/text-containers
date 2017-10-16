@@ -35,14 +35,14 @@ import           Data.Text.Short                (ShortText)
 import qualified Data.Text.Short                as TS
 import qualified Data.Text.Short.Unsafe         as TS
 import           Data.Word
-import           Foreign.C.Types
 import           GHC.Exts                       (Int (..))
 import           GHC.Prim
 import           GHC.ST                         (ST (ST))
 import           GHC.Word                       (Word8 (..))
 import           Numeric                        (showHex)
 import           Prelude                        hiding (elem, length, null)
-import           System.IO.Unsafe
+
+import           PrimOps                        (compareByteArrays#)
 
 ----------------------------------------------------------------------------
 -- GHC (Mutable)ByteArray# helpers
@@ -230,22 +230,22 @@ instance Hashable e => Hashable (A e) where
 ----------------------------------------------------------------------------
 
 equalByteArray :: BA -> Int -> Int -> BA -> Int -> Int -> Bool
-equalByteArray (BA# ba1#) !ofs1 !n1 (BA# ba2#) !ofs2 !n2
+equalByteArray (BA# ba1#) !(I# ofs1#) !n1@(I# n1#) (BA# ba2#) !(I# ofs2#) !n2
   | n1 /= n2  = False
   | n1 == 0   = True
-  | otherwise = unsafeDupablePerformIO (c_memcmp ba1# (fromIntegral ofs1) ba2# (fromIntegral ofs2) (fromIntegral n2)) == 0
+  | otherwise = I# (compareByteArrays# ba1# ofs1# ba2# ofs2# n1#) == 0
 
 compareByteArray :: BA -> Int -> Int -> BA -> Int -> Int -> Ordering
-compareByteArray (BA# ba1#) !ofs1 !n1 (BA# ba2#) !ofs2 !n2
+compareByteArray (BA# ba1#) !(I# ofs1#) !n1 (BA# ba2#) !(I# ofs2#) !n2
   | n == 0 = compare n1 n2
-  | otherwise = case unsafeDupablePerformIO (c_memcmp ba1# (fromIntegral ofs1) ba2# (fromIntegral ofs2) (fromIntegral n)) of
-      r | r < 0     -> LT
-        | r > 0     -> GT
-        | n1 < n2   -> LT
-        | n1 > n2   -> GT
-        | otherwise -> EQ
+  | otherwise = case compareByteArrays# ba1# ofs1# ba2# ofs2# n# of
+      r# | I# r# < 0 -> LT
+         | I# r# > 0 -> GT
+         | n1 < n2   -> LT
+         | n1 > n2   -> GT
+         | otherwise -> EQ
   where
-    n = n1 `min` n2
+    !n@(I# n#) = n1 `min` n2
 
 data IdxOfsLen = IdxOfsLen !Int !Int !Int
                deriving Show
@@ -255,11 +255,6 @@ cmpBA2OfsLen !ba !ba2 = \(IdxOfsLen _ ofs n) -> compareByteArray ba 0 (sizeOfByt
 
 cmpOfsLens :: BA -> IdxOfsLen -> BA -> IdxOfsLen -> Ordering
 cmpOfsLens !ba !(IdxOfsLen _ ofs n) !ba2 !(IdxOfsLen _ ofs2 n2) = compareByteArray ba ofs n ba2 ofs2 n2
-
-
-foreign import ccall unsafe "hs_text_containers_memcmp"
-  c_memcmp :: ByteArray# -> CSize -> ByteArray# -> CSize -> CSize -> IO CInt
-
 
 hexdumpBA :: BA -> String
 hexdumpBA ba = "0x" ++ go 0

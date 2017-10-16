@@ -41,6 +41,7 @@ library
 
   other-modules:     Data.TextArray.Unboxed.Internal
                      Internal
+                     PrimOps
 
   build-depends:     base       ^>= 4.8.0.0 || ^>= 4.9.0.0 || ^>= 4.10.0.0
                    , ghc-prim   ^>= 0.4.0.0 || ^>= 0.5.0.0
@@ -53,10 +54,14 @@ library
 
   hs-source-dirs:    src
 
-  c-sources:         cbits/cbits.c
+  if !impl(ghc >= 8.3.20171016)
+    c-sources:       cbits/cbits.c
+    hs-source-dirs:  src-ghc710
+  else
+    hs-source-dirs:  src-ghc804
 
   if !impl(ghc >= 8.0)
-    build-depends: semigroups ^>= 0.18.3
+    build-depends:   semigroups ^>= 0.18.3
 
   ghc-options:       -Wall
 
