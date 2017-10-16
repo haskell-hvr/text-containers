@@ -13,14 +13,9 @@ module Data.TextArray.Unboxed.Internal where
 import           Control.DeepSeq
 import           Control.Monad
 import           Control.Monad.ST
-import qualified Data.ByteString.Short as SBS
-import           Data.Hashable         (Hashable (..))
-import qualified Data.List             as List
-import           Data.Semigroup
-import           Data.Text.Short       (ShortText)
-import qualified Data.Text.Short       as TS
-import qualified GHC.Exts              as GHC
-import           Prelude               hiding (elem, length, null)
+import qualified Data.List        as List
+import qualified GHC.Exts         as GHC
+import           Prelude          hiding (elem, length, null)
 
 import           Internal
 
@@ -108,15 +103,16 @@ fromList [] = empty
 fromList xs = TA# $ createBA totalSize $ \mba -> do
     writeIntArray mba 0 n
     writeOfsTab mba 1 dataOfs xs
-    pure ()
   where
     writeOfsTab :: MBA s -> Int -> Int -> [ShortText] -> ST s ()
-    writeOfsTab _   !_ !_   []     = pure ()
+    writeOfsTab _   !j !ofs []     = assert (j-1 == n) $
+                                     assert (ofs == totalSize) $
+                                     pure ()
     writeOfsTab mba !j !ofs (t:ts) = do
-        let y = SBS.length (TS.toShortByteString t)
+        let t_sz = st2sz t
         writeIntArray mba  j ofs
-        copyByteArray (st2ba t) 0 mba ofs (sizeOfByteArray (st2ba t))
-        writeOfsTab mba (j+1) (ofs+y) ts
+        copyByteArray (st2ba t) 0 mba ofs t_sz
+        writeOfsTab mba (j+1) (ofs+t_sz) ts
 
     -- Memory layout of 'ByteArray#' payload:
     --
@@ -126,7 +122,26 @@ fromList xs = TA# $ createBA totalSize $ \mba -> do
     --
     -- byte-offset[0] points to start of 'data-area'
     --
-    (dataSize,n) = sumLen $ map (SBS.length . TS.toShortByteString) xs
+    CS n dataSize = sumCntSize $ map st2sz xs
+    dataOfs      = wordSize * (1+n)
+    totalSize    = dataOfs + dataSize
+
+-- | Internal scatter/gather helper for constructing 'TextArray' from sub-chunks of 'BA's
+fromOfsLens :: Int -> Int -> [(BA,IdxOfsLen)] -> TextArray
+fromOfsLens _ _        [] = empty
+fromOfsLens n dataSize xs = TA# $ createBA totalSize $ \mba -> do
+    writeIntArray mba 0 n
+    writeOfsTab mba 1 dataOfs xs
+  where
+    writeOfsTab :: MBA s -> Int -> Int -> [(BA,IdxOfsLen)] -> ST s ()
+    writeOfsTab _   !j !ofs [] = assert (j-1 == n) $
+                                 assert (ofs == totalSize) $
+                                 pure ()
+    writeOfsTab mba !j !ofs ((src_ba,IdxOfsLen _ src_ofs src_sz):ts) = do
+        writeIntArray mba j ofs
+        copyByteArray src_ba src_ofs mba ofs src_sz
+        writeOfsTab mba (j+1) (ofs+src_sz) ts
+
     dataOfs      = wordSize * (1+n)
     totalSize    = dataOfs + dataSize
 
@@ -237,8 +252,3 @@ listOfsLen ta@(TA# ba)
         ofs' | i == sz   = sizeOfByteArray ba
              | otherwise = indexIntArray ba (i+1)
 
-sumLen :: [Int] -> (Int,Int)
-sumLen = go 0 0
-  where
-    go !s !l []     = (s,l)
-    go !s !l (x:xs) = go (s+x) (l+1) xs

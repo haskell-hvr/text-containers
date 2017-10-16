@@ -9,22 +9,38 @@
 -- |
 -- Copyright: © 2017 Herbert Valerio Riedel
 -- License: GPLv3
-module Internal where
+module Internal
+    ( module Internal
+    , module Data.Word
+    , Data.Semigroup.Semigroup((<>))
+    , ST
+    , ShortText
+    , assert
+    , unless
+    , when
+    , Hashable(..)
+    ) where
 
 import           Control.DeepSeq
+import           Control.Exception
+import           Control.Monad
 import           Control.Monad.ST
 import           Data.Bits
 import qualified Data.ByteString.Short          as SBS
 import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Hashable                  (Hashable (..),
                                                  hashByteArrayWithSalt)
+import           Data.Semigroup
 import           Data.Text.Short                (ShortText)
 import qualified Data.Text.Short                as TS
 import qualified Data.Text.Short.Unsafe         as TS
+import           Data.Word
 import           Foreign.C.Types
 import           GHC.Exts                       (Int (..))
 import           GHC.Prim
 import           GHC.ST                         (ST (ST))
+import           GHC.Word                       (Word8 (..))
+import           Numeric                        (showHex)
 import           Prelude                        hiding (elem, length, null)
 import           System.IO.Unsafe
 
@@ -51,6 +67,9 @@ st2ba :: ShortText -> BA
 st2ba x = case TS.toShortByteString x of
             SBS.SBS y -> BA# y
 
+st2sz :: ShortText -> Int
+st2sz = sizeOfByteArray . st2ba
+
 copyByteArray :: BA -> Int -> MBA s -> Int -> Int -> ST s ()
 copyByteArray (BA# src#) (I# srcOfs#) (MBA# dest#) (I# destOfs#) (I# n#)
   = ST $ \s -> case copyByteArray# src# srcOfs# dest# destOfs# n# s of
@@ -60,6 +79,10 @@ indexIntArray :: BA -> Int -> Int
 indexIntArray (BA# ba#) (I# i#)
   = I# (indexIntArray# ba# i#)
 
+indexWord8Array :: BA -> Int -> Word8
+indexWord8Array (BA# ba#) (I# i#)
+  = W8# (indexWord8Array# ba# i#)
+
 sizeOfByteArray :: BA -> Int
 sizeOfByteArray (BA# ba#) = I# (sizeofByteArray# ba#)
 
@@ -68,10 +91,20 @@ writeIntArray (MBA# mba#) (I# i#) (I# j#)
   = ST $ \s -> case writeIntArray# mba# i# j# s of
                  s' -> (# s', () #)
 
+writeWord8Array :: MBA s -> Int -> Word8 -> ST s ()
+writeWord8Array (MBA# mba#) (I# i#) (W8# j#)
+  = ST $ \s -> case writeWord8Array# mba# i# j# s of
+                 s' -> (# s', () #)
+
 newByteArray :: Int -> ST s (MBA s)
 newByteArray (I# n#)
   = ST $ \s -> case newByteArray# n# s of
                  (# s', mba# #) -> (# s', MBA# mba# #)
+
+shrinkMutableByteArray :: MBA s -> Int -> ST s ()
+shrinkMutableByteArray (MBA# mba#) (I# n#)
+  = ST $ \s -> case shrinkMutableByteArray# mba# n# s of
+                 s' -> (# s', () #)
 
 unsafeFreezeByteArray :: MBA s -> ST s BA
 unsafeFreezeByteArray (MBA# mba#)
@@ -84,11 +117,22 @@ createBA n go = runST $ do
   go mba
   unsafeFreezeByteArray mba
 
+createBA' :: Int -> (forall s. MBA s -> ST s x) -> (BA,x)
+createBA' n go = runST $ do
+  mba <- newByteArray n
+  x <- go mba
+  ba <- unsafeFreezeByteArray mba
+  pure (ba,x)
+
 sliceBA :: BA -> Int -> Int -> BA
-sliceBA orig ofs0 n = createBA n $ \mba -> copyByteArray orig ofs0 mba 0 n
+sliceBA orig ofs0 n = assert (ofs0 + n <= sizeOfByteArray orig) $
+                      createBA n $ \mba -> copyByteArray orig ofs0 mba 0 n
 
 instance Hashable BA where
   hashWithSalt salt ba@(BA# ba#) = hashByteArrayWithSalt ba# 0 (sizeOfByteArray ba) salt
+
+instance Show BA where
+  show = hexdumpBA
 
 ----------------------------------------------------------------------------
 
@@ -136,7 +180,7 @@ arraySingleton x = runST $ do
 
 arrayFromListN :: Int -> [e] -> A e
 arrayFromListN n xs0 = createA n undefined $ \ma -> do
-    let go !_ [] = pure ()
+    let go !i [] = assert (i==n) $ pure ()
         go !i (x:xs) = do
           writeArray ma i x
           go (i+1) xs
@@ -209,32 +253,41 @@ data IdxOfsLen = IdxOfsLen !Int !Int !Int
 cmpBA2OfsLen :: BA -> BA -> IdxOfsLen -> Ordering
 cmpBA2OfsLen !ba !ba2 = \(IdxOfsLen _ ofs n) -> compareByteArray ba 0 (sizeOfByteArray ba) ba2 ofs n
 
+cmpOfsLens :: BA -> IdxOfsLen -> BA -> IdxOfsLen -> Ordering
+cmpOfsLens !ba !(IdxOfsLen _ ofs n) !ba2 !(IdxOfsLen _ ofs2 n2) = compareByteArray ba ofs n ba2 ofs2 n2
+
+
 foreign import ccall unsafe "hs_text_containers_memcmp"
   c_memcmp :: ByteArray# -> CSize -> ByteArray# -> CSize -> CSize -> IO CInt
 
 
-
-
-{-
 hexdumpBA :: BA -> String
-hexdumpBA ba = go 0
+hexdumpBA ba = "0x" ++ go 0
   where
-    go j | j < sz    = (h (indexWord8Array ba j) (spacer (go (j+1))))
+    go j | j < sz    = h (indexWord8Array ba j) (spacer (go (j+1)))
          | otherwise = ""
       where
-        spacer = if j `rem` 8 == 7 then (' ':) else id
+        spacer = id
+        -- spacer = if j `rem` 8 == 7 then ('_':) else id
 
     sz = sizeOfByteArray ba
 
     h :: Word8 -> ShowS
-    h x | x < 0x10  = showHex x . ('0':)
+    h x | x < 0x10  = ('0':) . showHex x
         | otherwise = showHex x
 
-    indexWord8Array :: BA -> Int -> Word8
-    indexWord8Array (BA# ba#) (I# i#)
-      = W8# (indexWord8Array# ba# i#)
--}
+----------------------------------------------------------------------------
+-- helper
 
+-- | Encodes a count and size pair
+data CntSize = CS !Int !Int deriving Show
 
+-- | Add size to 'CntSize'
+(^+) :: CntSize -> Int -> CntSize
+(CS c s) ^+ s1 = CS (c+1) (s+s1)
 
-
+sumCntSize :: [Int] -> CntSize
+sumCntSize = go 0 0
+  where
+    go !s !l []     = CS l s
+    go !s !l (x:xs) = go (s+x) (l+1) xs

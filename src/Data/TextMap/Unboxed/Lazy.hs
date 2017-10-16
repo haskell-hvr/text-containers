@@ -48,7 +48,6 @@ module Data.TextMap.Unboxed.Lazy
 
 import           Control.DeepSeq
 import qualified Data.Foldable        as F
-import           Data.Hashable        (Hashable (..))
 import qualified Data.Map.Lazy        as Map
 import qualified GHC.Exts             as GHC (IsList (..))
 import           Prelude              hiding (lookup, map, null)

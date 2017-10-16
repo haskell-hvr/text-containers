@@ -1,2 +1,5 @@
 packages: .
 tests: True
+
+package text-containers
+  ghc-options: -fno-ignore-asserts
