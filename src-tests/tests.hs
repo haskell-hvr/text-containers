@@ -124,6 +124,58 @@ tests = testGroup "Tests" [testsMapLazy, testsSet, testsArray]
                      s2 = Set.fromList xs
                  in all (\k -> fmap snd (TS.lookupGE k s1) == Set.lookupGE k s2) (someStrs ++ xs)
 
+
+      , QC.testProperty "union" $
+          \s1 s2 -> TS.fromSet s1 `TS.union` TS.fromSet s2 == TS.fromSet (s1 `Set.union` s2)
+
+      , QC.testProperty "union2" $
+          \s1' s2' s3' -> let s1 = s1' `Set.union` s3'
+                              s2 = s2' `Set.union` s3'
+                          in TS.fromSet s1 `TS.union` TS.fromSet s2 == TS.fromSet (s1 `Set.union` s2)
+
+      , QC.testProperty "union3" $
+          \s1 -> TS.fromSet s1 `TS.union` TS.fromSet s1 == TS.fromSet s1
+
+      , QC.testProperty "intersection" $
+          \s1 s2 -> TS.fromSet s1 `TS.intersection` TS.fromSet s2 == TS.fromSet (s1 `Set.intersection` s2)
+
+      , QC.testProperty "intersection2" $
+          \s1' s2' s3' -> let s1 = s1' `Set.union` s3'
+                              s2 = s2' `Set.union` s3'
+                          in TS.fromSet s1 `TS.intersection` TS.fromSet s2 == TS.fromSet (s1 `Set.intersection` s2)
+
+      , QC.testProperty "intersection3" $
+          \s1 -> TS.fromSet s1 `TS.intersection` TS.fromSet s1 == TS.fromSet s1
+
+      , QC.testProperty "difference" $
+          \s1 s2 -> TS.fromSet s1 `TS.difference` TS.fromSet s2 == TS.fromSet (s1 `Set.difference` s2)
+
+      , QC.testProperty "difference2" $
+          \s1' s2' s3' -> let s1 = s1' `Set.union` s3'
+                              s2 = s2' `Set.union` s3'
+                          in TS.fromSet s1 `TS.difference` TS.fromSet s2 == TS.fromSet (s1 `Set.difference` s2)
+
+      , QC.testProperty "difference3" $
+          \s1 -> TS.null ((TS.fromSet s1) `TS.difference` (TS.fromSet s1))
+
+      , QC.testProperty "sdifference" $
+          \s1' s2' -> let s1 = TS.fromSet s1'
+                          s2 = TS.fromSet s2'
+                      in (s1 `TS.sdifference` s2) ==  (s1 `TS.union` s2) `TS.difference` (s1 `TS.intersection` s2)
+
+      , QC.testProperty "sdifference2" $
+          \s1' -> let s1 = TS.fromSet s1' in TS.null (s1 `TS.sdifference` s1)
+
+
+      , QC.testProperty "isSubsetOf" $
+          \s1 s2 -> TS.fromSet s1 `TS.isSubsetOf` TS.fromSet s2 == s1 `Set.isSubsetOf` s2
+
+      , QC.testProperty "isSubsetOf2" $
+          \s1 s2 -> TS.fromSet s1 `TS.isSubsetOf` TS.fromSet (s1 `Set.union` s2)
+
+      , QC.testProperty "isProperSubsetOf" $
+          \s1 s2 -> TS.fromSet s1 `TS.isProperSubsetOf` TS.fromSet s2 == s1 `Set.isProperSubsetOf` s2
+
       ]
 
     testsMapLazy = testGroup "TextMap(Lazy)"
