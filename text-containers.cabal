@@ -12,6 +12,7 @@ maintainer:          hvr@gnu.org
 category:            Data, Data Structures
 build-type:          Simple
 bug-reports:         https://github.com/hvr/text-containers/issues
+tested-with:         GHC==8.2.1, GHC==8.0.2, GHC==7.10.3
 
 description: {
 This package provides memory-optimised implementations of string-indexed container types.
