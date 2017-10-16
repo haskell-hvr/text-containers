@@ -7,10 +7,10 @@
 -- License: GPLv3
 module PrimOps ( compareByteArrays# ) where
 
-import           Foreign.C.Types
-import           GHC.Exts         (Int (..))
-import           GHC.Prim
-import           System.IO.Unsafe
+import           Foreign.C.Types  (CInt (..), CSize (..))
+import           GHC.Exts         (Int (I#))
+import           GHC.Prim         (ByteArray#, Int#)
+import           System.IO.Unsafe (unsafeDupablePerformIO)
 
 -- | Emulate GHC 8.4's 'GHC.Prim.compareByteArrays#'
 compareByteArrays# :: ByteArray# -> Int# -> ByteArray# -> Int# -> Int# -> Int#

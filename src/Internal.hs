@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns     #-}
 {-# LANGUAGE MagicHash        #-}
 {-# LANGUAGE RankNTypes       #-}
-{-# LANGUAGE TypeFamilies     #-}
 {-# LANGUAGE UnboxedTuples    #-}
 {-# LANGUAGE UnliftedFFITypes #-}
 {-# LANGUAGE Unsafe           #-}
@@ -42,7 +41,7 @@ import           GHC.Word                       (Word8 (..))
 import           Numeric                        (showHex)
 import           Prelude                        hiding (elem, length, null)
 
-import           PrimOps                        (compareByteArrays#)
+import qualified PrimOps
 
 ----------------------------------------------------------------------------
 -- GHC (Mutable)ByteArray# helpers
@@ -230,15 +229,19 @@ instance Hashable e => Hashable (A e) where
 ----------------------------------------------------------------------------
 
 equalByteArray :: BA -> Int -> Int -> BA -> Int -> Int -> Bool
-equalByteArray (BA# ba1#) !(I# ofs1#) !n1@(I# n1#) (BA# ba2#) !(I# ofs2#) !n2
+equalByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1@(I# n1#) ba2@(BA# ba2#) !ofs2@(I# ofs2#) !n2
+  | assert (ofs1 >= 0 && n1 >= 0 && ofs1 + n1 <= sizeOfByteArray ba1) False = undefined
+  | assert (ofs2 >= 0 && n2 >= 0 && ofs2 + n2 <= sizeOfByteArray ba2) False = undefined
   | n1 /= n2  = False
   | n1 == 0   = True
-  | otherwise = I# (compareByteArrays# ba1# ofs1# ba2# ofs2# n1#) == 0
+  | otherwise = I# (PrimOps.compareByteArrays# ba1# ofs1# ba2# ofs2# n1#) == 0
 
 compareByteArray :: BA -> Int -> Int -> BA -> Int -> Int -> Ordering
-compareByteArray (BA# ba1#) !(I# ofs1#) !n1 (BA# ba2#) !(I# ofs2#) !n2
+compareByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1 ba2@(BA# ba2#) !ofs2@(I# ofs2#) !n2
+  | assert (ofs1 >= 0 && n1 >= 0 && ofs1 + n1 <= sizeOfByteArray ba1) False = undefined
+  | assert (ofs2 >= 0 && n2 >= 0 && ofs2 + n2 <= sizeOfByteArray ba2) False = undefined
   | n == 0 = compare n1 n2
-  | otherwise = case compareByteArrays# ba1# ofs1# ba2# ofs2# n# of
+  | otherwise = case PrimOps.compareByteArrays# ba1# ofs1# ba2# ofs2# n# of
       r# | I# r# < 0 -> LT
          | I# r# > 0 -> GT
          | n1 < n2   -> LT

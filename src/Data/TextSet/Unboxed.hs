@@ -320,7 +320,7 @@ data LRes = LResEmpty              -- empty set
 data LMode = LBelow -- if between two entries, return 'LResBelow'
            | LAbove -- if between two entries, return 'LResAbove'
 
--- Find near entry
+-- | Find near entry
 --
 -- NB: the implementation of 'lookupIndex{L,R}' differs only in two places, marked with (I) and (II) comments
 lookupIndexNear :: LMode -> Key -> TextSet -> LRes
@@ -348,7 +348,8 @@ lookupIndexNear mode x (TS ta)
     -----------------------------------------------
 
     goL :: Int -> Int -> LRes
-    goL li ui -- invariant: li < ui
+    goL li ui
+      | assert (li < ui) False = undefined -- invariant: li < ui
       | mi == li  = LResAbove mv -- closest match -- (I)
       | otherwise = case cmpBA mv of
                       LT -> goL li mi -- go left
@@ -362,7 +363,8 @@ lookupIndexNear mode x (TS ta)
         mid li' ui' = li' + quot (ui'-li') 2 -- (II)
 
     goR :: Int -> Int -> LRes
-    goR li ui -- invariant: li < ui
+    goR li ui
+      | assert (li < ui) False = undefined -- invariant: li < ui
       | mi == ui  = LResBelow mv -- closest match -- (I)
       | otherwise = case cmpBA mv of
                       LT -> goR li mi    -- go left
