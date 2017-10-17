@@ -66,6 +66,9 @@ import           Data.TextArray.Unboxed          (TextArray)
 import qualified Data.TextArray.Unboxed.Internal as TA
 import           Internal
 
+-- repro-helper for https://ghc.haskell.org/trac/ghc/ticket/14361
+import           Internal2
+
 -- | A set of unboxed 'ShortText' strings
 --
 -- The memory footprint of this data-structure is a single heap object (an unlifted 'ByteArray#') with the size expressed in words
@@ -343,7 +346,7 @@ lookupIndexNear mode x (TS ta)
     lv0 = TA.indexOfsLen' ta li0
     uv0 = TA.indexOfsLen' ta ui0
 
-    cmpBA = cmpBA2OfsLen (st2ba x) (TA.ta2ba ta)
+    cmpBA = Internal2.cmpBA2OfsLen (st2ba x) (TA.ta2ba ta)
 
     -----------------------------------------------
 

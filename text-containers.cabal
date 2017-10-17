@@ -41,6 +41,7 @@ library
 
   other-modules:     Data.TextArray.Unboxed.Internal
                      Internal
+                     Internal2
                      PrimOps
 
   build-depends:     base       ^>= 4.8.0.0 || ^>= 4.9.0.0 || ^>= 4.10.0.0
