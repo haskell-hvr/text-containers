@@ -18,6 +18,8 @@ module Internal
     , unless
     , when
     , Hashable(..)
+    , coerce
+    , inline
     ) where
 
 import           Control.DeepSeq
@@ -27,6 +29,7 @@ import           Control.Monad.ST
 import           Data.Bits
 import qualified Data.ByteString.Short          as SBS
 import qualified Data.ByteString.Short.Internal as SBS
+import           Data.Coerce
 import           Data.Hashable                  (Hashable (..),
                                                  hashByteArrayWithSalt)
 import           Data.Semigroup
@@ -34,7 +37,7 @@ import           Data.Text.Short                (ShortText)
 import qualified Data.Text.Short                as TS
 import qualified Data.Text.Short.Unsafe         as TS
 import           Data.Word
-import           GHC.Exts                       (Int (..))
+import           GHC.Exts                       (Int (..), inline, isTrue#)
 import           GHC.Prim
 import           GHC.ST                         (ST (ST))
 import           GHC.Word                       (Word8 (..))
@@ -129,9 +132,6 @@ sliceBA orig ofs0 n = assert (ofs0 + n <= sizeOfByteArray orig) $
 
 instance Hashable BA where
   hashWithSalt salt ba@(BA# ba#) = hashByteArrayWithSalt ba# 0 (sizeOfByteArray ba) salt
-
-instance Show BA where
-  show = hexdumpBA
 
 ----------------------------------------------------------------------------
 
@@ -228,6 +228,8 @@ instance Hashable e => Hashable (A e) where
 
 ----------------------------------------------------------------------------
 
+-- instance Eq BA where x == y = equalByteArray x 0 (sizeOfByteArray x) y 0 (sizeOfByteArray y)
+
 equalByteArray :: BA -> Int -> Int -> BA -> Int -> Int -> Bool
 equalByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1@(I# n1#) ba2@(BA# ba2#) !ofs2@(I# ofs2#) !n2
   | assert (ofs1 >= 0 && n1 >= 0 && ofs1 + n1 <= sizeOfByteArray ba1) False = undefined
@@ -235,6 +237,8 @@ equalByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1@(I# n1#) ba2@(BA# ba2#) !ofs2
   | n1 /= n2  = False
   | n1 == 0   = True
   | otherwise = I# (PrimOps.compareByteArrays# ba1# ofs1# ba2# ofs2# n1#) == 0
+
+-- instance Ord BA where compare x y = compareByteArray x 0 (sizeOfByteArray x) y 0 (sizeOfByteArray y)
 
 compareByteArray :: BA -> Int -> Int -> BA -> Int -> Int -> Ordering
 compareByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1 ba2@(BA# ba2#) !ofs2@(I# ofs2#) !n2
@@ -250,7 +254,9 @@ compareByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1 ba2@(BA# ba2#) !ofs2@(I# of
   where
     !n@(I# n#) = n1 `min` n2
 
-data IdxOfsLen = IdxOfsLen !Int !Int !Int
+----------------------------------------------------------------------------
+
+data IdxOfsLen = IdxOfsLen {-idx-}!Int {-ofs-}!Int {-len-}!Int
                deriving Show
 
 cmpBA2OfsLen :: BA -> BA -> IdxOfsLen -> Ordering
@@ -259,20 +265,22 @@ cmpBA2OfsLen !ba !ba2 = \(IdxOfsLen _ ofs n) -> compareByteArray ba 0 (sizeOfByt
 cmpOfsLens :: BA -> IdxOfsLen -> BA -> IdxOfsLen -> Ordering
 cmpOfsLens !ba !(IdxOfsLen _ ofs n) !ba2 !(IdxOfsLen _ ofs2 n2) = compareByteArray ba ofs n ba2 ofs2 n2
 
-hexdumpBA :: BA -> String
-hexdumpBA ba = "0x" ++ go 0
-  where
-    go j | j < sz    = h (indexWord8Array ba j) (spacer (go (j+1)))
-         | otherwise = ""
-      where
-        spacer = id
-        -- spacer = if j `rem` 8 == 7 then ('_':) else id
+----------------------------------------------------------------------------
 
-    sz = sizeOfByteArray ba
+instance Show BA where
+  show ba = "0x" ++ go 0
+    where
+      go j | j < sz    = h (indexWord8Array ba j) (spacer (go (j+1)))
+           | otherwise = ""
+        where
+          spacer = id
+          -- spacer = if j `rem` 8 == 7 then ('_':) else id
 
-    h :: Word8 -> ShowS
-    h x | x < 0x10  = ('0':) . showHex x
-        | otherwise = showHex x
+      sz = sizeOfByteArray ba
+
+      h :: Word8 -> ShowS
+      h x | x < 0x10  = ('0':) . showHex x
+          | otherwise = showHex x
 
 ----------------------------------------------------------------------------
 -- helper
