@@ -236,6 +236,7 @@ equalByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1@(I# n1#) ba2@(BA# ba2#) !ofs2
   | assert (ofs2 >= 0 && n2 >= 0 && ofs2 + n2 <= sizeOfByteArray ba2) False = undefined
   | n1 /= n2  = False
   | n1 == 0   = True
+  | sameByteArray ba1 ba2 = True
   | otherwise = I# (PrimOps.compareByteArrays# ba1# ofs1# ba2# ofs2# n1#) == 0
 
 -- instance Ord BA where compare x y = compareByteArray x 0 (sizeOfByteArray x) y 0 (sizeOfByteArray y)
@@ -245,6 +246,7 @@ compareByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1 ba2@(BA# ba2#) !ofs2@(I# of
   | assert (ofs1 >= 0 && n1 >= 0 && ofs1 + n1 <= sizeOfByteArray ba1) False = undefined
   | assert (ofs2 >= 0 && n2 >= 0 && ofs2 + n2 <= sizeOfByteArray ba2) False = undefined
   | n == 0 = compare n1 n2
+  | sameByteArray ba1 ba2 = EQ
   | otherwise = case PrimOps.compareByteArrays# ba1# ofs1# ba2# ofs2# n# of
       r# | I# r# < 0 -> LT
          | I# r# > 0 -> GT
@@ -253,6 +255,9 @@ compareByteArray ba1@(BA# ba1#) !ofs1@(I# ofs1#) !n1 ba2@(BA# ba2#) !ofs2@(I# of
          | otherwise -> EQ
   where
     !n@(I# n#) = n1 `min` n2
+
+sameByteArray :: BA -> BA -> Bool
+sameByteArray !(BA# ba1#) !(BA# ba2#) = isTrue# (reallyUnsafePtrEquality# (unsafeCoerce# ba1# :: ()) (unsafeCoerce# ba2# :: ()))
 
 ----------------------------------------------------------------------------
 
