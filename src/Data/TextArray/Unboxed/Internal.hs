@@ -32,9 +32,6 @@ import           Internal
 -- NOTE: Depending on whether you @UNPACK@ the 'TextArray' wrapper, you need at least one additional word for the pointer to the internal 'ByteArray#' heap object.
 newtype TextArray = TA# BA
 
-ta2ba :: TextArray -> BA
-ta2ba (TA# x) = x
-
 instance Eq TextArray where
   (TA# x) == (TA# y) = ba2sbs x == ba2sbs y
 
@@ -175,7 +172,7 @@ append ta1@(TA# ba1) ta2@(TA# ba2) = TA# $ createBA totalSize $ \mba -> do
 
 -- | \(\mathcal{O}(n)\). Deconstruct 'TextArray' into list of strings.
 toList :: TextArray -> [ShortText]
-toList ta = map (\(IdxOfsLen _ ofs n) -> ba2st (sliceBA (ta2ba ta) ofs n)) (listOfsLen ta)
+toList ta = map (\(IdxOfsLen _ ofs n) -> ba2st (coerce sliceBA ta ofs n)) (listOfsLen ta)
 
 -- | \(\mathcal{O}(n)\). Test whether 'TestArray' contains a specific string.
 elem :: ShortText -> TextArray -> Bool
@@ -183,29 +180,29 @@ elem needle ta = not (List.null (elemIndices needle ta))
 
 -- | \(\mathcal{O}(n)\). Find occurences of given string in 'TextArray' and report list of indices (in ascending order).
 elemIndices :: ShortText -> TextArray -> [Int]
-elemIndices needle ta = [ i | IdxOfsLen i ofs n <- listOfsLen ta, cmp ofs n ]
+elemIndices needle ta@(TA# ba) = [ i | IdxOfsLen i ofs n <- listOfsLen ta, cmp ofs n ]
   where
     !ba2   = st2ba needle
     !ba2sz = sizeOfByteArray ba2
 
-    cmp !ofs1 !n = equalByteArray ba2 0 ba2sz (ta2ba ta) ofs1 n
+    cmp !ofs1 !n = equalByteArray ba2 0 ba2sz ba ofs1 n
 
 findAllOrd :: (Ordering -> Bool) -> ShortText -> TextArray -> [ShortText]
-findAllOrd ordFilter needle ta = [ mkst ofs n | IdxOfsLen _ ofs n <- listOfsLen ta, ordFilter (cmp ofs n) ]
+findAllOrd ordFilter needle ta@(TA# ba) = [ mkst ofs n | IdxOfsLen _ ofs n <- listOfsLen ta, ordFilter (cmp ofs n) ]
   where
     !ba2   = st2ba needle
     !ba2sz = sizeOfByteArray ba2
 
-    mkst !ofs1 !n = ba2st (sliceBA (ta2ba ta) ofs1 n)
-    cmp !ofs1 !n = compareByteArray ba2 0 ba2sz (ta2ba ta) ofs1 n
+    mkst !ofs1 !n = ba2st (coerce sliceBA ta ofs1 n)
+    cmp !ofs1 !n = compareByteArray ba2 0 ba2sz ba ofs1 n
 
 findIndicesOrd :: (Ordering -> Bool) -> ShortText -> TextArray -> [Int]
-findIndicesOrd ordFilter needle ta = [ i | IdxOfsLen i ofs n <- listOfsLen ta, ordFilter (cmp ofs n) ]
+findIndicesOrd ordFilter needle ta@(TA# ba) = [ i | IdxOfsLen i ofs n <- listOfsLen ta, ordFilter (cmp ofs n) ]
   where
     !ba2   = st2ba needle
     !ba2sz = sizeOfByteArray ba2
 
-    cmp !ofs1 !n = compareByteArray ba2 0 ba2sz (ta2ba ta) ofs1 n
+    cmp !ofs1 !n = compareByteArray ba2 0 ba2sz ba ofs1 n
 
 ----------------------------------------------------------------------------
 -- internal helpers

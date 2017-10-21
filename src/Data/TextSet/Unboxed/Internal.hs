@@ -222,7 +222,7 @@ lookupIndex t ts = case lookupIndexNear LBelow t ts of
                      _                           -> Nothing
 
 mkist :: TextSet -> IdxOfsLen -> (Int, Key)
-mkist (TS ta) (IdxOfsLen i ofs n) = (i, ba2st (sliceBA (TA.ta2ba ta) ofs n))
+mkist ts (IdxOfsLen i ofs n) = (i, ba2st (coerce sliceBA ts ofs n))
 
 -- TODO: lookupLT lookupGT
 
@@ -299,7 +299,7 @@ lookupIndexNear mode x (TS ta)
     lv0 = TA.indexOfsLen' ta li0
     uv0 = TA.indexOfsLen' ta ui0
 
-    cmpBA = cmpBA2OfsLen (st2ba x) (TA.ta2ba ta)
+    cmpBA = coerce cmpBA2OfsLen (st2ba x) ta
 
     -----------------------------------------------
 
@@ -337,17 +337,25 @@ lookupIndexNear mode x (TS ta)
 genSetOp :: TextSet -> TextSet -> SetOpRes
 genSetOp l r = lraFromListN (size l + size r) (computeLRs' l r)
 
+-- helper
+listOfsLen :: TextSet -> [IdxOfsLen]
+listOfsLen (TS ta) = TA.listOfsLen ta
+
+{-# INLINE fromOfsLen #-}
+fromOfsLen :: Int -> Int -> [(TextSet, IdxOfsLen)] -> TextSet
+fromOfsLen cnt sz lst = TS $ TA.fromOfsLens cnt sz (coerce lst)
+
 -- | \(\mathcal{O}(m+n)\). Intersection ( \(\cap\) ) of two 'TextSet's.
 intersection :: TextSet -> TextSet -> TextSet
 intersection l0 r0
   | null l0 = empty
   | null r0 = empty
   | size l0 > size r0 = intersection r0 l0
-intersection l0@(TS l0ta) r0 = TS $ TA.fromOfsLens res_cnt res_sz (go (lraToList lrs0) l0_ofss)
+intersection l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen l0))
   where
     go []       []              = []
     go (L:lrs)  (_:l_ofss)      =                go lrs l_ofss
-    go (LR:lrs) (l_ofs:l_ofss)  = (l0ba,l_ofs) : go lrs l_ofss
+    go (LR:lrs) (l_ofs:l_ofss)  = (l0,l_ofs)   : go lrs l_ofss
     go (R:lrs)  l_ofss          =                go lrs l_ofss
     go _        _               = error "TextSet.intersection: the impossible happened"
 
@@ -356,21 +364,17 @@ intersection l0@(TS l0ta) r0 = TS $ TA.fromOfsLens res_cnt res_sz (go (lraToList
     res_cnt = lr_cnt
     res_sz  = lr_sz
 
-    l0_ofss = TA.listOfsLen l0ta
-
-    l0ba = TA.ta2ba l0ta
-
 -- | \(\mathcal{O}(m+n)\). Set-difference ( \(\setminus\) ) of two 'TextSet's.
 difference :: TextSet -> TextSet -> TextSet
 difference l0 r0
   | null l0 = empty
   | null r0 = l0
-difference l0@(TS l0ta) r0 = TS $ TA.fromOfsLens res_cnt res_sz (go (lraToList lrs0) l0_ofss)
+difference l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen l0))
   where
     go []       []              = []
-    go (L:lrs)  (l_ofs:l_ofss)  = (l0ba,l_ofs) : go lrs l_ofss
-    go (LR:lrs) (_:l_ofss)      =                go lrs l_ofss
-    go (R:lrs)  l_ofss          =                go lrs l_ofss
+    go (L:lrs)  (l_ofs:l_ofss)  = (l0,l_ofs) : go lrs l_ofss
+    go (LR:lrs) (_:l_ofss)      =              go lrs l_ofss
+    go (R:lrs)  l_ofss          =              go lrs l_ofss
     go _        _               = error "TextSet.difference: the impossible happened"
 
     SetOpRes lrs0 (CS l_cnt l_sz) _ _ = genSetOp l0 r0
@@ -378,33 +382,23 @@ difference l0@(TS l0ta) r0 = TS $ TA.fromOfsLens res_cnt res_sz (go (lraToList l
     res_cnt = l_cnt
     res_sz  = l_sz
 
-    l0_ofss = TA.listOfsLen l0ta
-
-    l0ba = TA.ta2ba l0ta
-
 -- | \(\mathcal{O}(m+n)\). Union ( \(\cup\) ) of two 'TextSet's.
 union :: TextSet -> TextSet -> TextSet
 union l0 r0
   | null l0 = r0
   | null r0 = l0
-union l0@(TS l0ta) r0@(TS r0ta) = TS $ TA.fromOfsLens res_cnt res_sz (go (lraToList lrs0) l0_ofss r0_ofss)
+union l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen l0) (listOfsLen r0))
   where
     go []       []             []             = []
-    go (L:lrs)  (l_ofs:l_ofss) r_ofss         = (l0ba,l_ofs) : go lrs l_ofss r_ofss
-    go (LR:lrs) (l_ofs:l_ofss) (_:r_ofss)     = (l0ba,l_ofs) : go lrs l_ofss r_ofss
-    go (R:lrs)  l_ofss         (r_ofs:r_ofss) = (r0ba,r_ofs) : go lrs l_ofss r_ofss
+    go (L:lrs)  (l_ofs:l_ofss) r_ofss         = (l0,l_ofs) : go lrs l_ofss r_ofss
+    go (LR:lrs) (l_ofs:l_ofss) (_:r_ofss)     = (l0,l_ofs) : go lrs l_ofss r_ofss
+    go (R:lrs)  l_ofss         (r_ofs:r_ofss) = (r0,r_ofs) : go lrs l_ofss r_ofss
     go _        _              _              = error "TextSet.union: the impossible happened"
 
     SetOpRes lrs0 (CS l_cnt l_sz) (CS lr_cnt lr_sz) (CS r_cnt r_sz) = genSetOp l0 r0
 
     res_cnt = l_cnt + lr_cnt + r_cnt
     res_sz  = l_sz  + lr_sz  + r_sz
-
-    l0_ofss = TA.listOfsLen l0ta
-    r0_ofss = TA.listOfsLen r0ta
-
-    l0ba = TA.ta2ba l0ta
-    r0ba = TA.ta2ba r0ta
 
 -- | \(\mathcal{O}(m+n)\). Symmetric difference ( \(\triangle\) ) (aka /disjunctive union/) of two 'TextSet's, i.e.
 -- \( A \triangle B = (A \setminus B) \cup (B \setminus A) \).
@@ -413,25 +407,18 @@ sdifference :: TextSet -> TextSet -> TextSet
 sdifference l0 r0
   | null l0 = r0
   | null r0 = l0
-sdifference l0@(TS l0ta) r0@(TS r0ta) = TS $ TA.fromOfsLens res_cnt res_sz (go (lraToList lrs0) l0_ofss r0_ofss)
+sdifference l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen l0) (listOfsLen r0))
   where
     go []       []             []             = []
-    go (L:lrs)  (l_ofs:l_ofss) r_ofss         = (l0ba,l_ofs) : go lrs l_ofss r_ofss
-    go (LR:lrs) (_:l_ofss)     (_:r_ofss)     =                go lrs l_ofss r_ofss
-    go (R:lrs)  l_ofss         (r_ofs:r_ofss) = (r0ba,r_ofs) : go lrs l_ofss r_ofss
+    go (L:lrs)  (l_ofs:l_ofss) r_ofss         = (l0,l_ofs) : go lrs l_ofss r_ofss
+    go (LR:lrs) (_:l_ofss)     (_:r_ofss)     =              go lrs l_ofss r_ofss
+    go (R:lrs)  l_ofss         (r_ofs:r_ofss) = (r0,r_ofs) : go lrs l_ofss r_ofss
     go _        _              _              = error "TextSet.sdifference: the impossible happened"
 
     SetOpRes lrs0 (CS l_cnt l_sz) _ (CS r_cnt r_sz) = genSetOp l0 r0
 
     res_cnt = l_cnt + r_cnt
     res_sz  = l_sz  + r_sz
-
-    l0_ofss = TA.listOfsLen l0ta
-    r0_ofss = TA.listOfsLen r0ta
-
-    l0ba = TA.ta2ba l0ta
-    r0ba = TA.ta2ba r0ta
-
 
 -- | Encodes an intermediate set-delta (into 3 disjoint sets) from
 -- which the usual set operations (union, intersection, difference,
@@ -450,7 +437,7 @@ isProperSubsetOf l r = (size l < size r) && l `isSubsetOf` r
 
 -- | \(\mathcal{O}(m+n)\). Subset ( \( \subseteq \) ) predicate.
 isSubsetOf :: TextSet -> TextSet -> Bool
-isSubsetOf l0@(TS tal) r0@(TS tar) = (size l0 <= size r0) && go iolL iolR
+isSubsetOf l0 r0 = (size l0 <= size r0) && go (listOfsLen l0) (listOfsLen r0)
   where
     go []     _  = True
     go (_:_)  [] = False
@@ -459,10 +446,7 @@ isSubsetOf l0@(TS tal) r0@(TS tar) = (size l0 <= size r0) && go iolL iolR
                          EQ -> go ls rs
                          GT -> go (l:ls) rs
 
-    iolL = TA.listOfsLen tal
-    iolR = TA.listOfsLen tar
-
-    cmp x y = cmpOfsLens (TA.ta2ba tal) x (TA.ta2ba tar) y
+    cmp x y = coerce cmpOfsLens l0 x r0 y
 
 ----------------------------------------------------------------------------
 -- helpers
@@ -482,7 +466,7 @@ computeLRs' (TS tal) (TS tar) = go iolL iolR
     iolL = TA.listOfsLen tal
     iolR = TA.listOfsLen tar
 
-    cmp x y = cmpOfsLens (TA.ta2ba tal) x (TA.ta2ba tar) y
+    cmp x y = coerce cmpOfsLens tal x tar y
 
     len (IdxOfsLen _ _ n) = n
 
