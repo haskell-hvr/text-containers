@@ -51,10 +51,14 @@ instance GHC.IsList TextSet where
   toList   = toList
 
 -- | 'Semigroup' over 'union' operation.
+--
+-- @since 0.1.1.0
 instance Semigroup TextSet where
   (<>) = union
 
 -- | 'Monoid' over 'union' operation.
+--
+-- @since 0.1.1.0
 instance Monoid TextSet where
   mempty  = empty
   mappend = (<>)
@@ -346,6 +350,8 @@ fromOfsLen :: Int -> Int -> [(TextSet, IdxOfsLen)] -> TextSet
 fromOfsLen cnt sz lst = TS $ TA.fromOfsLens cnt sz (coerce lst)
 
 -- | \(\mathcal{O}(m+n)\). Intersection ( \(\cap\) ) of two 'TextSet's.
+--
+-- @since 0.1.1.0
 intersection :: TextSet -> TextSet -> TextSet
 intersection l0 r0
   | null l0 = empty
@@ -365,6 +371,8 @@ intersection l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen 
     res_sz  = lr_sz
 
 -- | \(\mathcal{O}(m+n)\). Set-difference ( \(\setminus\) ) of two 'TextSet's.
+--
+-- @since 0.1.1.0
 difference :: TextSet -> TextSet -> TextSet
 difference l0 r0
   | null l0 = empty
@@ -383,6 +391,8 @@ difference l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen l0
     res_sz  = l_sz
 
 -- | \(\mathcal{O}(m+n)\). Union ( \(\cup\) ) of two 'TextSet's.
+--
+-- @since 0.1.1.0
 union :: TextSet -> TextSet -> TextSet
 union l0 r0
   | null l0 = r0
@@ -403,6 +413,7 @@ union l0 r0 = fromOfsLen res_cnt res_sz (go (lraToList lrs0) (listOfsLen l0) (li
 -- | \(\mathcal{O}(m+n)\). Symmetric difference ( \(\triangle\) ) (aka /disjunctive union/) of two 'TextSet's, i.e.
 -- \( A \triangle B = (A \setminus B) \cup (B \setminus A) \).
 --
+-- @since 0.1.1.0
 sdifference :: TextSet -> TextSet -> TextSet
 sdifference l0 r0
   | null l0 = r0
@@ -432,10 +443,14 @@ data LR = L | LR | R
         deriving (Eq,Show)
 
 -- | \(\mathcal{O}(m+n)\). Proper-subset ( \( \subset \) ) predicate.
+--
+-- @since 0.1.1.0
 isProperSubsetOf :: TextSet -> TextSet -> Bool
 isProperSubsetOf l r = (size l < size r) && l `isSubsetOf` r
 
 -- | \(\mathcal{O}(m+n)\). Subset ( \( \subseteq \) ) predicate.
+--
+-- @since 0.1.1.0
 isSubsetOf :: TextSet -> TextSet -> Bool
 isSubsetOf l0 r0 = (size l0 <= size r0) && go (listOfsLen l0) (listOfsLen r0)
   where
