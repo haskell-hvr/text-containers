@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE RankNTypes   #-}
 {-# LANGUAGE Trustworthy  #-}
@@ -36,10 +37,23 @@ module Data.TextMap.Unboxed.Lazy
     , fromList
     , fromDistinctAscList
     , fromMap
+    , fromTextSet
 
       -- * Deconstruction
     , toList
     , toMap
+    , keysTextSet
+
+      -- * Set operations
+    , unionWith
+    , unionWith'
+    , intersectionWith
+    , difference
+    , sdifference
+    , sdifferenceWith
+
+    , restrictKeys
+    , withoutKeys
 
       -- * Traversals
     , map
@@ -47,13 +61,15 @@ module Data.TextMap.Unboxed.Lazy
     ) where
 
 import           Control.DeepSeq
-import qualified Data.Foldable        as F
-import qualified Data.Map.Lazy        as Map
-import qualified GHC.Exts             as GHC (IsList (..))
-import           Prelude              hiding (lookup, map, null)
+import qualified Data.Foldable                 as F
+import qualified Data.Map.Lazy                 as Map
+import qualified GHC.Exts                      as GHC (IsList (..))
+import           Prelude                       hiding (lookup, map, null)
 
-import           Data.TextSet.Unboxed (Key, TextSet)
-import qualified Data.TextSet.Unboxed as TS
+import           Data.TextSet.Unboxed          (Key, TextSet)
+import           Data.TextSet.Unboxed.Internal (LR (..))
+import qualified Data.TextSet.Unboxed.Internal as TS
+
 import           Internal
 
 -- | A map of (unboxed) 'ShortText' string keys to values.
@@ -88,6 +104,17 @@ instance GHC.IsList (TextMap v) where
   type Item (TextMap v) = (Key,v)
   fromList = fromList
   toList   = toList
+
+-- | Combines 'TextMap's via @'unionWith' ('<>')@
+--
+-- @since 0.1.1.0
+instance Semigroup v => Semigroup (TextMap v) where
+  (<>) = unionWith (<>)
+
+-- | @since 0.1.1.0
+instance Semigroup v => Monoid (TextMap v) where
+  mempty  = empty
+  mappend = (<>)
 
 instance NFData v => NFData (TextMap v) where
   rnf (TM ks vs) = ks `deepseq` vs `deepseq` ()
@@ -223,8 +250,18 @@ toMap :: TextMap v -> Map.Map Key v
 toMap m = Map.fromDistinctAscList (toList m)
 
 -- | \(\mathcal{O}(1)\). Extract set of all keys.
+--
+-- @since 0.1.1.0
 keysTextSet :: TextMap v -> TextSet
 keysTextSet (TM ks _) = ks
+
+-- | \(\mathcal{O}(n)\). Build a 'TextMap' from a 'TextSet' of keys.
+--
+-- @since 0.1.1.0
+fromTextSet :: (Key -> v) -> TextSet -> TextMap v
+fromTextSet f ks = TM ks vs
+  where
+    vs = arrayFromListN (TS.size ks) (fmap f (TS.toList ks))
 
 -- | \(\mathcal{O}(\log n)\). Test whether key is present in map.
 --
@@ -312,6 +349,213 @@ size (TM _ vs) = sizeofArray vs
 --
 null :: TextMap v -> Bool
 null m = size m == 0
+
+-- | \(\mathcal{O}(m+n)\). Union of two 'TextMap's with combining function for common keys.
+--
+-- See also the 'Semigroup' instance of 'TextMap' which uses @'unionWith' ('<>')@.
+--
+-- You can use @'unionWith' 'const'@ or @'unionWith' ('flip' 'const')@ to get a left or right biased merge respectively.
+--
+-- @since 0.1.1.0
+unionWith :: (a -> a -> a) -> TextMap a -> TextMap a -> TextMap a
+unionWith _ l0 r0
+  | null l0 = r0
+  | null r0 = l0
+unionWith f l0 r0 = unionWith' id id f l0 r0
+
+-- | \(\mathcal{O}(m+n)\). Union of two 'TextMap's with combining functions.
+--
+-- This is a more general version of 'unionWith' (which is
+-- semantically equivalent to @'unionWith'' 'id' 'id'@) allowing for
+-- computing the union of 'TextMap's with different value types.
+--
+-- @since 0.1.1.0
+unionWith' :: (a -> c) -> (b -> c) -> (a -> b -> c) -> TextMap a -> TextMap b -> TextMap c
+unionWith' _  fr _ l0             r0   | null l0 = fmap fr r0
+unionWith' fl _  _ l0             r0   | null r0 = fmap fl l0
+unionWith' fl fr f (TM l0ks l0vs) (TM r0ks r0vs) = TM ks' vs'
+  where
+    ks' = TS.fromOfsLen res_cnt res_sz (goK (TS.lraToList lrs0) (TS.listOfsLen l0ks) (TS.listOfsLen r0ks))
+
+    vs' = arrayFromListN res_cnt (goV (TS.lraToList lrs0) 0 0)
+
+    -- TODO: verify (lraToList lrs0) isn't CSE'd
+
+    goK []       []             []             = []
+    goK (L:lrs)  (l_ofs:l_ofss) r_ofss         = (l0ks,l_ofs) : goK lrs l_ofss r_ofss
+    goK (LR:lrs) (l_ofs:l_ofss) (_:r_ofss)     = (l0ks,l_ofs) : goK lrs l_ofss r_ofss
+    goK (R:lrs)  l_ofss         (r_ofs:r_ofss) = (r0ks,r_ofs) : goK lrs l_ofss r_ofss
+    goK _        _              _              = error "TextMap.unionWith: the impossible happened"
+
+
+    goV []       !li !ri = assert (li == (l_cnt+lr_cnt) && ri == (r_cnt+lr_cnt)) []
+    goV (L:lrs)  !li !ri = fl (indexArray l0vs li)                   : goV lrs (li+1)  ri
+    goV (LR:lrs) !li !ri = indexArray l0vs li `f` indexArray r0vs ri : goV lrs (li+1) (ri+1)
+    goV (R:lrs)  !li !ri = fr (indexArray r0vs ri)                   : goV lrs  li    (ri+1)
+
+    TS.SetOpRes lrs0 (CS l_cnt l_sz) (CS lr_cnt lr_sz) (CS r_cnt r_sz) = TS.genSetOp l0ks r0ks
+
+    res_cnt = l_cnt + lr_cnt + r_cnt
+    res_sz  = l_sz  + lr_sz  + r_sz
+
+-- | \(\mathcal{O}(m+n)\). Intersection of two 'TextMap's with a combining function for common keys.
+--
+-- Commonly used combining functions:
+--
+-- [@('<>')@] for combining values via their 'Semigroup' operation
+--
+-- ['const'] for a left-biased merge
+--
+-- [@('flip' 'const')@] for a right-biased merge
+--
+-- @since 0.1.1.0
+intersectionWith :: (a -> b -> c) -> TextMap a -> TextMap b -> TextMap c
+intersectionWith _ l0 r0
+  | null l0 = empty
+  | null r0 = empty
+intersectionWith f (TM l0ks l0vs) (TM r0ks r0vs) = TM ks' vs'
+  where
+    ks' = TS.fromOfsLen res_cnt res_sz (goK (TS.lraToList lrs0) (TS.listOfsLen l0ks) (TS.listOfsLen r0ks))
+
+    vs' = arrayFromListN res_cnt (goV (TS.lraToList lrs0) 0 0)
+
+    -- TODO: verify (lraToList lrs0) isn't CSE'd
+
+    goK []       []             []             = []
+    goK (L:lrs)  (_:l_ofss)     r_ofss         =                goK lrs l_ofss r_ofss
+    goK (LR:lrs) (l_ofs:l_ofss) (_:r_ofss)     = (l0ks,l_ofs) : goK lrs l_ofss r_ofss
+    goK (R:lrs)  l_ofss         (_:r_ofss)     =                goK lrs l_ofss r_ofss
+    goK _        _              _              = error "TextMap.intersectionWith: the impossible happened"
+
+
+    goV []       !li !ri = assert (li == (l_cnt+lr_cnt) && ri == (r_cnt+lr_cnt)) []
+    goV (L:lrs)  !li !ri =                                             goV lrs (li+1)  ri
+    goV (LR:lrs) !li !ri = indexArray l0vs li `f` indexArray r0vs ri : goV lrs (li+1) (ri+1)
+    goV (R:lrs)  !li !ri =                                             goV lrs  li    (ri+1)
+
+    TS.SetOpRes lrs0 (CS l_cnt _) (CS lr_cnt lr_sz) (CS r_cnt _) = TS.genSetOp l0ks r0ks
+
+    res_cnt = lr_cnt
+    res_sz  = lr_sz
+
+-- | \(\mathcal{O}(m+n)\). Difference of two 'TextMap's.
+--
+-- @'difference' l r = 'withoutKeys' l ('keysTextSet' r)@
+--
+-- @since 0.1.1.0
+difference :: TextMap a -> TextMap b -> TextMap a
+difference l r = restrictKeys l (keysTextSet r)
+
+-- | \(\mathcal{O}(m+n)\). Symmetric difference of two 'TextMap's.
+--
+-- @'sdifference' l r = 'withoutKeys' l ('keysTextSet' l '<>' 'keysTextSet' r)@
+--
+-- @since 0.1.1.0
+sdifference :: TextMap a -> TextMap a -> TextMap a
+sdifference l0 r0
+  | null l0 = r0
+  | null r0 = l0
+sdifference l0 r0 = sdifferenceWith id id l0 r0
+
+-- | \(\mathcal{O}(m+n)\). Symmetric difference of two 'TextMap's.
+--
+-- This is a more general version of 'sdifference' supporting
+-- combining maps with different value types.
+--
+-- @since 0.1.1.0
+sdifferenceWith :: (a -> c) -> (b -> c) -> TextMap a -> TextMap b -> TextMap c
+sdifferenceWith _  fr l0             r0   | null l0 = fmap fr r0
+sdifferenceWith fl _  l0             r0   | null r0 = fmap fl l0
+sdifferenceWith fl fr (TM l0ks l0vs) (TM r0ks r0vs) = TM ks' vs'
+  where
+    ks' = TS.fromOfsLen res_cnt res_sz (goK (TS.lraToList lrs0) (TS.listOfsLen l0ks) (TS.listOfsLen r0ks))
+
+    vs' = arrayFromListN res_cnt (goV (TS.lraToList lrs0) 0 0)
+
+    -- TODO: verify (lraToList lrs0) isn't CSE'd
+
+    goK []       []             []             = []
+    goK (L:lrs)  (l_ofs:l_ofss) r_ofss         = (l0ks,l_ofs) : goK lrs l_ofss r_ofss
+    goK (LR:lrs) (_ :l_ofss)    (_:r_ofss)     =                goK lrs l_ofss r_ofss
+    goK (R:lrs)  l_ofss         (r_ofs:r_ofss) = (r0ks,r_ofs) : goK lrs l_ofss r_ofss
+    goK _        _              _              = error "TextMap.sdifferenceWith: the impossible happened"
+
+
+    goV []       !li !ri = assert (li == (l_cnt+lr_cnt) && ri == (r_cnt+lr_cnt)) []
+    goV (L:lrs)  !li !ri = fl (indexArray l0vs li)                   : goV lrs (li+1)  ri
+    goV (LR:lrs) !li !ri =                                             goV lrs (li+1) (ri+1)
+    goV (R:lrs)  !li !ri = fr (indexArray r0vs ri)                   : goV lrs  li    (ri+1)
+
+    TS.SetOpRes lrs0 (CS l_cnt l_sz) (CS lr_cnt _) (CS r_cnt r_sz) = TS.genSetOp l0ks r0ks
+
+    res_cnt = l_cnt + r_cnt
+    res_sz  = l_sz  + r_sz
+
+-- | \(\mathcal{O}(m+n)\). Restrict 'TextMap' to keys contained in 'TestSet'.
+--
+-- @since 0.1.1.0
+restrictKeys :: TextMap a -> TextSet -> TextMap a
+restrictKeys l0 !r0
+  | null l0    = empty
+  | TS.null r0 = empty
+restrictKeys (TM l0ks l0vs) r0ks = TM ks' vs'
+  where
+    ks' = TS.fromOfsLen res_cnt res_sz (goK (TS.lraToList lrs0) (TS.listOfsLen l0ks) (TS.listOfsLen r0ks))
+
+    vs' = arrayFromListN res_cnt (goV (TS.lraToList lrs0) 0)
+
+    -- TODO: verify (lraToList lrs0) isn't CSE'd
+
+    goK []       []             []             = []
+    goK (L:lrs)  (_:l_ofss)     r_ofss         =                goK lrs l_ofss r_ofss
+    goK (LR:lrs) (l_ofs:l_ofss) (_:r_ofss)     = (l0ks,l_ofs) : goK lrs l_ofss r_ofss
+    goK (R:lrs)  l_ofss         (_:r_ofss)     =                goK lrs l_ofss r_ofss
+    goK _        _              _              = error "TextMap.restrictKeys: the impossible happened"
+
+
+    goV []       !li = assert (li == (l_cnt+lr_cnt)) []
+    goV (L:lrs)  !li =                      goV lrs (li+1)
+    goV (LR:lrs) !li = indexArray l0vs li : goV lrs (li+1)
+    goV (R:lrs)  !li =                      goV lrs  li
+
+    TS.SetOpRes lrs0 (CS l_cnt _) (CS lr_cnt lr_sz) _ = TS.genSetOp l0ks r0ks
+
+    res_cnt = lr_cnt
+    res_sz  = lr_sz
+
+
+-- | \(\mathcal{O}(m+n)\). Remove keys from 'TextMap' which are contained in 'TextSet'.
+--
+-- @since 0.1.1.0
+withoutKeys :: TextMap a -> TextSet -> TextMap a
+withoutKeys l0 !r0
+  | null l0    = empty
+  | TS.null r0 = l0
+withoutKeys (TM l0ks l0vs) r0ks = TM ks' vs'
+  where
+    ks' = TS.fromOfsLen res_cnt res_sz (goK (TS.lraToList lrs0) (TS.listOfsLen l0ks) (TS.listOfsLen r0ks))
+
+    vs' = arrayFromListN res_cnt (goV (TS.lraToList lrs0) 0)
+
+    -- TODO: verify (lraToList lrs0) isn't CSE'd
+
+    goK []       []             []             = []
+    goK (L:lrs)  (l_ofs:l_ofss)     r_ofss     = (l0ks,l_ofs) : goK lrs l_ofss r_ofss
+    goK (LR:lrs) (_:l_ofss)     (_:r_ofss)     =                goK lrs l_ofss r_ofss
+    goK (R:lrs)  l_ofss         (_:r_ofss)     =                goK lrs l_ofss r_ofss
+    goK _        _              _              = error "TextMap.restrictKeys: the impossible happened"
+
+
+    goV []       !li = assert (li == (l_cnt+lr_cnt)) []
+    goV (L:lrs)  !li = indexArray l0vs li : goV lrs (li+1)
+    goV (LR:lrs) !li =                      goV lrs (li+1)
+    goV (R:lrs)  !li =                      goV lrs  li
+
+    TS.SetOpRes lrs0 (CS l_cnt l_sz) (CS lr_cnt _) _ = TS.genSetOp l0ks r0ks
+
+    res_cnt = l_cnt
+    res_sz  = l_sz
+
 
 -- | \(\mathcal{O}(n)\). Apply function to values in map.
 --
